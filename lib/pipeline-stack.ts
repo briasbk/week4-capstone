@@ -19,7 +19,7 @@ export class PipelineStack extends cdk.Stack {
           'main',
           {
             connectionArn:
-              'YOUR_CONNECTION_ARN_HERE', // ← paste your ARN here
+              'arn:aws:codeconnections:us-east-1:508471420037:connection/307841f1-3f32-4f99-a8c1-7440ae902383', // ← paste your ARN here
           }
         ),
         commands: ['npm ci', 'npm run build', 'npx cdk synth'],
