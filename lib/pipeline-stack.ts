@@ -36,6 +36,9 @@ export class PipelineStack extends cdk.Stack {
 class WorkflowAppStage extends cdk.Stage {
   constructor(scope: Construct, id: string, props?: cdk.StageProps) {
     super(scope, id, props);
-    new WorkflowStack(this, 'WorkflowStack');
+
+    new WorkflowStack(this, 'WorkflowStack', {
+      env: props?.env,
+    });
   }
 }
