@@ -1,46 +1,16 @@
-# Week 4 Capstone — Automated Serverless Workflows on AWS
+# Week 4 Capstone - Automated Serverless Workflows on AWS
 
-For this capstone I built a fully automated cloud deployment where pushing code to GitHub is the only manual step. Everything else — compiling the CDK app, synthesising CloudFormation, deploying Lambda and Step Functions, wiring up SSM — happens automatically through CodePipeline.
+For this capstone I built a fully automated cloud deployment where pushing code to GitHub is the only manual step. Everything else - compiling the CDK app, synthesising CloudFormation, deploying Lambda and Step Functions, wiring up SSM - happens automatically through CodePipeline.
 
 The stack uses AWS CDK (TypeScript) to define all infrastructure, CDK Pipelines for CI/CD, SSM Parameter Store for runtime config, Lambda to do the actual work, and Step Functions to orchestrate it all with proper error handling.
 
 ---
 
-## How it all fits together
-
-```
-GitHub (main branch)
-       │
-       ▼  push triggers pipeline
-┌─────────────────────────────┐
-│  CodePipeline               │
-│  workflow-cicd-pipeline     │
-│                             │
-│  Source → Build → Deploy    │
-└──────────────┬──────────────┘
-               │  CloudFormation
-               ▼
-┌─────────────────────────────────────────┐
-│  WorkflowStack                          │
-│                                         │
-│  SSM /app/config/greeting               │
-│          │  (IAM grantRead)             │
-│  Lambda: workflow-task                  │
-│          │  (invoked by)               │
-│  Step Functions State Machine           │
-│    ① Pass  — Validate Input            │
-│    ② Wait  — Wait For Ready (1s)       │
-│    ③ Task  — Invoke Lambda             │
-│         └─ retry ×2, catch → Fail      │
-│    ④ Succeed                           │
-└─────────────────────────────────────────┘
-```
-
 ### Services used
 
 | Service | What it does here |
 |---|---|
-| AWS CDK (TypeScript) | Defines every resource in code — nothing clicked in the console |
+| AWS CDK (TypeScript) | Defines every resource in code - nothing clicked in the console |
 | CDK Pipelines / CodePipeline | Deploys automatically on every push to `main` |
 | CodeBuild | Runs `npm ci`, `tsc`, and `cdk synth` |
 | SSM Parameter Store | Holds the greeting string the Lambda reads at runtime |
@@ -102,7 +72,7 @@ cdk bootstrap aws://508471420037/us-east-1
 cdk deploy WorkflowPipelineStack
 ```
 
-After this one command, the pipeline is live. Every subsequent push to `main` triggers a full build and deploy automatically — no more manual `cdk deploy` needed.
+After this one command, the pipeline is live. Every subsequent push to `main` triggers a full build and deploy automatically - no more manual `cdk deploy` needed.
 
 **Trigger the state machine manually**
 
@@ -112,15 +82,15 @@ Once the pipeline finishes (watch it in the CodePipeline console), go to Step Fu
 
 ## Screenshots
 
-### CodePipeline — all stages passing
+### CodePipeline - all stages passing
 
 ![CodePipeline Success](screenshots/codepipeline-success.png)
 
-### Step Functions — execution graph
+### Step Functions - execution graph
 
 ![Step Functions Execution](screenshots/stepfunctions-execution.png)
 
-### CloudWatch — Lambda retrieving the SSM value
+### CloudWatch - Lambda retrieving the SSM value
 
 ![CloudWatch Logs](screenshots/cloudwatch-lambda-logs.png)
 
@@ -128,18 +98,18 @@ Once the pipeline finishes (watch it in the CodePipeline console), go to Step Fu
 
 ## Design notes
 
-**IAM permissions** — rather than giving Lambda broad SSM access, CDK's `configParam.grantRead(workflowLambda)` generates a policy scoped to the exact ARN of `/app/config/greeting`. Nothing wider.
+**IAM permissions** - rather than giving Lambda broad SSM access, CDK's `configParam.grantRead(workflowLambda)` generates a policy scoped to the exact ARN of `/app/config/greeting`. Nothing wider.
 
-**Why three states in the state machine** — the rubric asked for at least two, but I added a Wait state between the Pass and Task states to make the flow more realistic (simulating an async readiness check). The Task state that calls Lambda has two retries with exponential backoff, and a Catch that routes unrecoverable failures to a Fail terminal state rather than leaving the execution hanging.
+**Why three states in the state machine** - the rubric asked for at least two, but I added a Wait state between the Pass and Task states to make the flow more realistic (simulating an async readiness check). The Task state that calls Lambda has two retries with exponential backoff, and a Catch that routes unrecoverable failures to a Fail terminal state rather than leaving the execution hanging.
 
-**Self-mutating pipeline** — `selfMutation: true` in CDK Pipelines means if you change `pipeline-stack.ts` itself, the pipeline updates its own infrastructure on the next run before deploying the app stage. You only ever need to run `cdk deploy` once.
+**Self-mutating pipeline** - `selfMutation: true` in CDK Pipelines means if you change `pipeline-stack.ts` itself, the pipeline updates its own infrastructure on the next run before deploying the app stage. You only ever need to run `cdk deploy` once.
 
-**SSM at runtime, not deploy time** — the Lambda gets the parameter *name* via an environment variable set by CDK, but fetches the actual *value* from SSM each time it runs. That means you can update the greeting without touching the code or redeploying:
+**SSM at runtime, not deploy time** - the Lambda gets the parameter *name* via an environment variable set by CDK, but fetches the actual *value* from SSM each time it runs. That means you can update the greeting without touching the code or redeploying:
 
 ```bash
 aws ssm put-parameter \
   --name "/app/config/greeting" \
-  --value "Something new — no redeploy needed!" \
+  --value "Something new - no redeploy needed!" \
   --overwrite
 ```
 

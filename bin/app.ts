@@ -7,5 +7,5 @@ const app = new cdk.App();
 
 new PipelineStack(app, 'WorkflowPipelineStack', {
   env: { account: '508471420037', region: 'us-east-1' },
-  description: 'CI/CD Pipeline — auto-deploys the Serverless Workflow stack',
+  description: 'CI/CD Pipeline - auto-deploys the Serverless Workflow stack',
 });
