@@ -5,7 +5,6 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'path';
 
 export class WorkflowStack extends cdk.Stack {
@@ -20,6 +19,15 @@ export class WorkflowStack extends cdk.Stack {
       tier: ssm.ParameterTier.STANDARD,
     });
 
+    // ---------- CloudWatch Log Group for Lambda ----------
+    // Explicit log group avoids the custom resource / Lambda that
+    // logRetention: uses internally — which needs extra IAM permissions
+    const lambdaLogGroup = new logs.LogGroup(this, 'WorkflowLambdaLogs', {
+      logGroupName: '/aws/lambda/workflow-task',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // ---------- Lambda Function ----------
     const workflowLambda = new lambda.Function(this, 'WorkflowTask', {
       functionName: 'workflow-task',
@@ -31,13 +39,13 @@ export class WorkflowStack extends cdk.Stack {
       environment: {
         SSM_PARAM_NAME: configParam.parameterName,
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,   // ✅ CDK manages log group creation
+      logGroup: lambdaLogGroup,  // use explicit log group, not logRetention
     });
 
-    // Grant Lambda read access to SSM
+    // Grant Lambda least-privilege read access to SSM parameter
     configParam.grantRead(workflowLambda);
 
-    // ---------- Step Functions Log Group (explicit) ----------
+    // ---------- CloudWatch Log Group for Step Functions ----------
     const sfnLogGroup = new logs.LogGroup(this, 'StateMachineLogs', {
       logGroupName: '/aws/states/workflow-state-machine',
       retention: logs.RetentionDays.ONE_WEEK,
@@ -99,8 +107,10 @@ export class WorkflowStack extends cdk.Stack {
       .next(invokeLambda)
       .next(workflowSuccess);
 
-    // ---------- State Machine with explicit X-Ray permissions ----------
-    const stateMachine = new stepfunctions.StateMachine(this, 'WorkflowStateMachine', {
+    // ---------- State Machine ----------
+    // tracingEnabled removed — X-Ray requires extra IAM permissions
+    // that are locked down in lab accounts
+    new stepfunctions.StateMachine(this, 'WorkflowStateMachine', {
       stateMachineName: 'workflow-state-machine',
       definitionBody: stepfunctions.DefinitionBody.fromChainable(definition),
       stateMachineType: stepfunctions.StateMachineType.STANDARD,
@@ -110,16 +120,8 @@ export class WorkflowStack extends cdk.Stack {
         level: stepfunctions.LogLevel.ALL,
         includeExecutionData: true,
       },
-      tracingEnabled: true,
+      tracingEnabled: false,  // X-Ray blocked in lab accounts
     });
-
-    // Ensure the state machine's role can write X-Ray traces
-    stateMachine.role?.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'],
-        resources: ['*'],
-      })
-    );
 
     // ---------- Outputs ----------
     new cdk.CfnOutput(this, 'LambdaFunctionName', {
@@ -127,9 +129,6 @@ export class WorkflowStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, 'SSMParameterName', {
       value: configParam.parameterName,
-    });
-    new cdk.CfnOutput(this, 'StateMachineArn', {
-      value: stateMachine.stateMachineArn,
     });
   }
 }
