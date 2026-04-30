@@ -9,7 +9,7 @@ export class PipelineStack extends cdk.Stack {
 
     const pipeline = new pipelines.CodePipeline(this, 'Pipeline', {
       pipelineName: 'workflow-cicd-pipeline',
-      selfMutation: false,
+      selfMutation: true,
       dockerEnabledForSynth: false,
       crossAccountKeys: false,
       synth: new pipelines.ShellStep('Synth', {
