@@ -5,15 +5,14 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'path';
 
 export class WorkflowStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // ─────────────────────────────────────────────
-    // 1. SSM Parameter Store – dynamic configuration
-    // ─────────────────────────────────────────────
+    // ---------- SSM Parameter ----------
     const configParam = new ssm.StringParameter(this, 'AppGreeting', {
       parameterName: '/app/config/greeting',
       stringValue: 'Hello from CI/CD Automated Infrastructure!',
@@ -21,18 +20,7 @@ export class WorkflowStack extends cdk.Stack {
       tier: ssm.ParameterTier.STANDARD,
     });
 
-    // ─────────────────────────────────────────────
-    // 2. CloudWatch Log Group for Lambda
-    // ─────────────────────────────────────────────
-    const lambdaLogGroup = new logs.LogGroup(this, 'WorkflowLambdaLogs', {
-      logGroupName: '/aws/lambda/workflow-task',
-      retention: logs.RetentionDays.ONE_WEEK,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    // ─────────────────────────────────────────────
-    // 3. Lambda Function – reads SSM at runtime
-    // ─────────────────────────────────────────────
+    // ---------- Lambda Function ----------
     const workflowLambda = new lambda.Function(this, 'WorkflowTask', {
       functionName: 'workflow-task',
       runtime: lambda.Runtime.NODEJS_18_X,
@@ -43,26 +31,20 @@ export class WorkflowStack extends cdk.Stack {
       environment: {
         SSM_PARAM_NAME: configParam.parameterName,
       },
-      logGroup: lambdaLogGroup,
+      logRetention: logs.RetentionDays.ONE_WEEK,   // ✅ CDK manages log group creation
     });
 
-    // Grant Lambda least-privilege read access to the SSM parameter
+    // Grant Lambda read access to SSM
     configParam.grantRead(workflowLambda);
 
-    // ─────────────────────────────────────────────
-    // 4. CloudWatch Log Group for Step Functions
-    // ─────────────────────────────────────────────
+    // ---------- Step Functions Log Group (explicit) ----------
     const sfnLogGroup = new logs.LogGroup(this, 'StateMachineLogs', {
       logGroupName: '/aws/states/workflow-state-machine',
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // ─────────────────────────────────────────────
-    // 5. Step Functions – State Machine Definition
-    // ─────────────────────────────────────────────
-
-    // State 1: Pass state – enrich/validate the input before processing
+    // ---------- Step Functions Definition ----------
     const validateInput = new stepfunctions.Pass(this, 'Validate Input', {
       comment: 'Validate and enrich the incoming event payload',
       parameters: {
@@ -73,13 +55,11 @@ export class WorkflowStack extends cdk.Stack {
       resultPath: '$',
     });
 
-    // State 2: Wait state – simulate an async checkpoint (1 second)
     const waitForReady = new stepfunctions.Wait(this, 'Wait For Ready', {
       comment: 'Brief pause to simulate an async readiness check',
       time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(1)),
     });
 
-    // State 3: Task state – invoke Lambda with retries and error handling
     const invokeLambda = new tasks.LambdaInvoke(this, 'Invoke Workflow Lambda', {
       lambdaFunction: workflowLambda,
       comment: 'Retrieve config from SSM via Lambda',
@@ -87,7 +67,6 @@ export class WorkflowStack extends cdk.Stack {
       retryOnServiceExceptions: true,
     });
 
-    // Retry up to 2 times with exponential backoff
     invokeLambda.addRetry({
       errors: [
         'Lambda.ServiceException',
@@ -100,7 +79,6 @@ export class WorkflowStack extends cdk.Stack {
       backoffRate: 2,
     });
 
-    // Catch any unhandled errors and route to a Fail state
     const handleFailure = new stepfunctions.Fail(this, 'Workflow Failed', {
       comment: 'Terminal failure state after all retries exhausted',
       error: 'WorkflowError',
@@ -112,18 +90,17 @@ export class WorkflowStack extends cdk.Stack {
       resultPath: '$.error',
     });
 
-    // Success terminal state
     const workflowSuccess = new stepfunctions.Succeed(this, 'Workflow Succeeded', {
       comment: 'All steps completed successfully',
     });
 
-    // Chain: Validate → Wait → Invoke Lambda → Succeed
     const definition = validateInput
       .next(waitForReady)
       .next(invokeLambda)
       .next(workflowSuccess);
 
-    new stepfunctions.StateMachine(this, 'WorkflowStateMachine', {
+    // ---------- State Machine with explicit X-Ray permissions ----------
+    const stateMachine = new stepfunctions.StateMachine(this, 'WorkflowStateMachine', {
       stateMachineName: 'workflow-state-machine',
       definitionBody: stepfunctions.DefinitionBody.fromChainable(definition),
       stateMachineType: stepfunctions.StateMachineType.STANDARD,
@@ -136,17 +113,23 @@ export class WorkflowStack extends cdk.Stack {
       tracingEnabled: true,
     });
 
-    // ─────────────────────────────────────────────
-    // 6. Stack Outputs
-    // ─────────────────────────────────────────────
+    // ✅ Ensure the state machine's role can write X-Ray traces
+    stateMachine.role?.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'],
+        resources: ['*'],
+      })
+    );
+
+    // ---------- Outputs ----------
     new cdk.CfnOutput(this, 'LambdaFunctionName', {
       value: workflowLambda.functionName,
-      description: 'Workflow Lambda function name',
     });
-
     new cdk.CfnOutput(this, 'SSMParameterName', {
       value: configParam.parameterName,
-      description: 'SSM Parameter name',
+    });
+    new cdk.CfnOutput(this, 'StateMachineArn', {
+      value: stateMachine.stateMachineArn,
     });
   }
 }

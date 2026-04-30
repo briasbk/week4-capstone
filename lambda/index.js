@@ -1,6 +1,6 @@
-const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
-
-const ssmClient = new SSMClient({});
+// lambda/index.js
+const AWS = require('aws-sdk');
+const ssm = new AWS.SSM();
 
 exports.handler = async (event) => {
   console.log('Event received:', JSON.stringify(event, null, 2));
@@ -10,14 +10,13 @@ exports.handler = async (event) => {
   try {
     console.log(`Fetching SSM parameter: ${paramName}`);
 
-    const command = new GetParameterCommand({
+    const result = await ssm.getParameter({
       Name: paramName,
       WithDecryption: false,
-    });
+    }).promise();
 
-    const result = await ssmClient.send(command);
     const greeting = result.Parameter.Value;
-
+    
     console.log('Successfully retrieved from SSM:', greeting);
 
     return {
