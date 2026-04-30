@@ -1,39 +1,69 @@
-# Capstone: Advanced IaC & Automated Workflows
+# Week 4 Capstone — Automated Serverless Workflows on AWS
 
-A fully automated, serverless cloud platform built with **AWS CDK**, **Step Functions**, **Lambda**, **SSM Parameter Store**, and **CodePipeline** — deployed end-to-end from a single `git push`.
+For this capstone I built a fully automated cloud deployment where pushing code to GitHub is the only manual step. Everything else — compiling the CDK app, synthesising CloudFormation, deploying Lambda and Step Functions, wiring up SSM — happens automatically through CodePipeline.
 
----
-
-## Architecture Overview
-
-
-### Services Used
-
-| Service | Role |
-|---|---|
-| **AWS CDK (TypeScript)** | Infrastructure as Code — defines all resources |
-| **CDK Pipelines / CodePipeline** | CI/CD automation — deploys on every `git push` |
-| **CodeBuild** | Builds and synths the CDK app |
-| **SSM Parameter Store** | Dynamic runtime configuration (`/app/config/greeting`) |
-| **AWS Lambda (Node.js 18)** | Serverless compute — retrieves SSM value at runtime |
-| **AWS Step Functions** | Workflow orchestrator with 3 states + error handling |
-| **CloudWatch Logs** | Observability for both Lambda and Step Functions |
-| **IAM** | Least-privilege role granting Lambda `ssm:GetParameter` only |
+The stack uses AWS CDK (TypeScript) to define all infrastructure, CDK Pipelines for CI/CD, SSM Parameter Store for runtime config, Lambda to do the actual work, and Step Functions to orchestrate it all with proper error handling.
 
 ---
 
-## Repository Structure
+## How it all fits together
 
 ```
-.
+GitHub (main branch)
+       │
+       ▼  push triggers pipeline
+┌─────────────────────────────┐
+│  CodePipeline               │
+│  workflow-cicd-pipeline     │
+│                             │
+│  Source → Build → Deploy    │
+└──────────────┬──────────────┘
+               │  CloudFormation
+               ▼
+┌─────────────────────────────────────────┐
+│  WorkflowStack                          │
+│                                         │
+│  SSM /app/config/greeting               │
+│          │  (IAM grantRead)             │
+│  Lambda: workflow-task                  │
+│          │  (invoked by)               │
+│  Step Functions State Machine           │
+│    ① Pass  — Validate Input            │
+│    ② Wait  — Wait For Ready (1s)       │
+│    ③ Task  — Invoke Lambda             │
+│         └─ retry ×2, catch → Fail      │
+│    ④ Succeed                           │
+└─────────────────────────────────────────┘
+```
+
+### Services used
+
+| Service | What it does here |
+|---|---|
+| AWS CDK (TypeScript) | Defines every resource in code — nothing clicked in the console |
+| CDK Pipelines / CodePipeline | Deploys automatically on every push to `main` |
+| CodeBuild | Runs `npm ci`, `tsc`, and `cdk synth` |
+| SSM Parameter Store | Holds the greeting string the Lambda reads at runtime |
+| Lambda (Node.js 18) | Fetches the SSM value and logs it |
+| Step Functions | Runs the 3-state workflow with retries and error handling |
+| CloudWatch Logs | Captures logs from both Lambda and the state machine |
+| IAM | Lambda role scoped to read exactly one SSM parameter, nothing else |
+
+---
+
+## Repo layout
+
+```
+week4-capstone/
 ├── bin/
-│   └── app.ts                  # CDK app entrypoint — instantiates PipelineStack
+│   └── app.ts               # CDK entrypoint
 ├── lib/
-│   ├── pipeline-stack.ts       # CDK Pipelines: CodePipeline + CodeBuild CI/CD
-│   └── workflow-stack.ts       # SSM + Lambda + Step Functions resources
+│   ├── pipeline-stack.ts    # CodePipeline + self-mutation
+│   └── workflow-stack.ts    # SSM, Lambda, Step Functions
 ├── lambda/
-│   └── index.js                # Lambda handler — reads SSM at runtime
-├── cdk.json                    # CDK configuration & feature flags
+│   └── index.js             # reads SSM, logs the value, returns it
+├── screenshots/             # deployment evidence (see below)
+├── cdk.json
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -41,20 +71,11 @@ A fully automated, serverless cloud platform built with **AWS CDK**, **Step Func
 
 ---
 
-## Prerequisites
+## Deploying it yourself
 
-| Tool | Version | Install |
-|---|---|---|
-| Node.js | ≥ 18 | https://nodejs.org |
-| AWS CLI | ≥ 2 | https://aws.amazon.com/cli/ |
-| AWS CDK CLI | ≥ 2.150 | `npm install -g aws-cdk` |
-| AWS Account | — | With programmatic access configured |
+You'll need Node.js ≥ 18, AWS CLI v2, and the CDK CLI (`npm install -g aws-cdk`).
 
----
-
-## Step-by-Step Deployment Guide
-
-### Step 1 — Clone & Install
+**Clone and install**
 
 ```bash
 git clone https://github.com/briasbk/week4-capstone.git
@@ -62,145 +83,92 @@ cd week4-capstone
 npm install
 ```
 
-### Step 2 — Configure AWS CLI
+**Configure AWS credentials**
 
 ```bash
 aws configure
-# Enter: AWS Access Key ID, Secret Access Key, Region (e.g. us-east-1), output format (json)
+aws sts get-caller-identity   # verify it's working
 ```
 
-Verify:
-```bash
-aws sts get-caller-identity
-```
-
-### Step 3 — Bootstrap CDK
-
-CDK bootstrapping provisions an S3 bucket and IAM roles used during deployments. Run **once per account/region**:
+**Bootstrap CDK** (only needed once per account/region)
 
 ```bash
-cdk bootstrap aws://5/us-east-1
+cdk bootstrap aws://508471420037/us-east-1
 ```
 
-### Step 4 — Connect GitHub to AWS
-
-1. In the AWS Console, go to **CodePipeline → Settings → Connections**
-2. Click **Create connection**, choose **GitHub**, and follow the OAuth flow
-3. Copy the Connection ARN (format: `arn:aws:codeconnections:us-east-1:...`)
-4. Open `lib/pipeline-stack.ts` and replace the three placeholder values:
-   - `YOUR_GITHUB_USERNAME/YOUR_REPO_NAME`
-   - `YOUR_ACCOUNT_ID`
-   - `YOUR_CONNECTION_ID`
-
-### Step 5 — Deploy the Pipeline Stack
-
-This single command deploys the self-mutating pipeline. After this, every `git push` to `main` will automatically re-deploy.
+**Deploy the pipeline**
 
 ```bash
 cdk deploy WorkflowPipelineStack
 ```
 
-### Step 6 — Push Code to Trigger the Pipeline
+After this one command, the pipeline is live. Every subsequent push to `main` triggers a full build and deploy automatically — no more manual `cdk deploy` needed.
 
-```bash
-git add .
-git commit -m "feat: initial capstone deployment"
-git push origin main
-```
+**Trigger the state machine manually**
 
-Watch the pipeline run in **AWS Console → CodePipeline → workflow-cicd-pipeline**.
-
-### Step 7 — Manually Execute the State Machine
-
-Once the pipeline finishes deploying the WorkflowStack:
-
-1. Go to **AWS Console → Step Functions → State machines**
-2. Click **workflow-state-machine**
-3. Click **Start execution**
-4. Use the default input `{}` and click **Start execution**
-5. Watch the visual graph — all states should turn green
+Once the pipeline finishes (watch it in the CodePipeline console), go to Step Functions → `workflow-state-machine` → Start execution → use `{}` as the input. All four states should turn green within a few seconds.
 
 ---
 
-## Evidence of Deployment
+## Screenshots
 
-### Screenshot 1 — Successful CodePipeline Execution
-
-> Shows all pipeline stages (Source → Build → Deploy) completed successfully.
+### CodePipeline — all stages passing
 
 ![CodePipeline Success](screenshots/codepipeline-success.png)
 
----
-
-### Screenshot 2 — Step Functions Visual Execution Graph
-
-> Shows the state machine execution with all states (Validate Input → Wait For Ready → Invoke Lambda → Succeed) highlighted green.
+### Step Functions — execution graph
 
 ![Step Functions Execution](screenshots/stepfunctions-execution.png)
 
----
+### CloudWatch — Lambda retrieving the SSM value
 
-### Screenshot 3 — CloudWatch Logs: Lambda SSM Retrieval
-
-> Shows Lambda CloudWatch logs confirming successful retrieval of the SSM parameter value.
-
-![CloudWatch Lambda Logs](screenshots/cloudwatch-lambda-logs.png)
+![CloudWatch Logs](screenshots/cloudwatch-lambda-logs.png)
 
 ---
 
-## Key Design Decisions
+## Design notes
 
-### Least-Privilege IAM
-The Lambda function's execution role is granted **only** `ssm:GetParameter` on the specific parameter path `/app/config/greeting` — nothing more. This is enforced by CDK's `configParam.grantRead(workflowLambda)` which scopes the policy to the exact resource ARN.
+**IAM permissions** — rather than giving Lambda broad SSM access, CDK's `configParam.grantRead(workflowLambda)` generates a policy scoped to the exact ARN of `/app/config/greeting`. Nothing wider.
 
-### Step Functions State Design (3 States)
+**Why three states in the state machine** — the rubric asked for at least two, but I added a Wait state between the Pass and Task states to make the flow more realistic (simulating an async readiness check). The Task state that calls Lambda has two retries with exponential backoff, and a Catch that routes unrecoverable failures to a Fail terminal state rather than leaving the execution hanging.
 
-| State | Type | Purpose |
-|---|---|---|
-| **Validate Input** | Pass | Enriches the payload — adds a UUID correlation ID and stage metadata before processing begins |
-| **Wait For Ready** | Wait | Simulates an async readiness check; demonstrates the Wait state type |
-| **Invoke Workflow Lambda** | Task | Calls the Lambda function with **2 retries** (exponential backoff) and a **Catch** block routing failures to a Fail terminal state |
+**Self-mutating pipeline** — `selfMutation: true` in CDK Pipelines means if you change `pipeline-stack.ts` itself, the pipeline updates its own infrastructure on the next run before deploying the app stage. You only ever need to run `cdk deploy` once.
 
-### Self-Mutating Pipeline
-CDK Pipelines' `selfMutation: true` means if you update `pipeline-stack.ts`, the pipeline will update itself before deploying the app — no manual `cdk deploy` needed after the first bootstrap.
+**SSM at runtime, not deploy time** — the Lambda gets the parameter *name* via an environment variable set by CDK, but fetches the actual *value* from SSM each time it runs. That means you can update the greeting without touching the code or redeploying:
 
-### Runtime Configuration via SSM
-The Lambda reads `SSM_PARAM_NAME` from its environment variable, which is set to the CDK-managed parameter name. This decouples the Lambda code from hardcoded config values — the SSM value can be updated in the console without redeploying.
+```bash
+aws ssm put-parameter \
+  --name "/app/config/greeting" \
+  --value "Something new — no redeploy needed!" \
+  --overwrite
+```
 
 ---
 
-## Testing the Lambda Locally
+## Useful one-liners
 
-You can invoke the Lambda directly (without Step Functions) via the CLI:
+Invoke the Lambda directly (skipping Step Functions):
 
 ```bash
 aws lambda invoke \
   --function-name workflow-task \
   --payload '{}' \
   --cli-binary-format raw-in-base64-out \
-  response.json
-
-cat response.json
-# Expected: {"status":"Success","parameterName":"/app/config/greeting","greeting":"Hello from CI/CD Automated Infrastructure!","timestamp":"..."}
+  out.json && cat out.json
 ```
 
-## Updating the SSM Parameter Value
+Kick off a state machine execution from the CLI:
 
 ```bash
-aws ssm put-parameter \
-  --name "/app/config/greeting" \
-  --value "Updated greeting — no redeploy needed!" \
-  --overwrite
+aws stepfunctions start-execution \
+  --state-machine-arn arn:aws:states:us-east-1:508471420037:stateMachine:workflow-state-machine \
+  --input '{}'
 ```
 
-Re-run the Step Functions execution — the Lambda will pick up the new value instantly.
-
----
-
-## Teardown
+Tear everything down cleanly:
 
 ```bash
 cdk destroy --all
 ```
 
-> Note: CloudWatch Log Groups are set to `RemovalPolicy.DESTROY` and will be deleted automatically.
+CloudWatch log groups have `RemovalPolicy.DESTROY` set, so they're cleaned up automatically.
