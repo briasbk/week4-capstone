@@ -113,7 +113,7 @@ export class WorkflowStack extends cdk.Stack {
       tracingEnabled: true,
     });
 
-    // ✅ Ensure the state machine's role can write X-Ray traces
+    // Ensure the state machine's role can write X-Ray traces
     stateMachine.role?.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'],

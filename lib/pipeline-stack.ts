@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as pipelines from 'aws-cdk-lib/pipelines';
+import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import { WorkflowStack } from './workflow-stack';
 
 export class PipelineStack extends cdk.Stack {
@@ -9,9 +10,10 @@ export class PipelineStack extends cdk.Stack {
 
     const pipeline = new pipelines.CodePipeline(this, 'Pipeline', {
       pipelineName: 'workflow-cicd-pipeline',
-      selfMutation: true,
+      selfMutation: false,
       dockerEnabledForSynth: false,
       crossAccountKeys: false,
+      pipelineType: codepipeline.PipelineType.V1,
       synth: new pipelines.ShellStep('Synth', {
         input: pipelines.CodePipelineSource.connection(
           'briasbk/week4-capstone',
@@ -36,9 +38,6 @@ export class PipelineStack extends cdk.Stack {
 class WorkflowAppStage extends cdk.Stage {
   constructor(scope: Construct, id: string, props?: cdk.StageProps) {
     super(scope, id, props);
-
-    new WorkflowStack(this, 'WorkflowStack', {
-      env: props?.env,
-    });
+    new WorkflowStack(this, 'WorkflowStack');
   }
 }
