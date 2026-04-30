@@ -8,3 +8,5 @@ cdk.out/
 *.js.map
 .env
 .env.*
+*.js
+!lambda/index.js
