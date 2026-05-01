@@ -65,7 +65,6 @@ aws sts get-caller-identity   # verify it's working
 ```bash
 cdk bootstrap aws://508471420037/us-east-1
 ```
-
 **Deploy the pipeline**
 
 ```bash
@@ -88,7 +87,7 @@ Once the pipeline finishes (watch it in the CodePipeline console), go to Step Fu
 
 ### Step Functions - execution graph
 
-![Step Functions Execution](screenshots/stepfunctions-execution.png)
+![Step Functions Execution](screenshots/stepfunctions_graph.png)
 
 ### CloudWatch - Lambda retrieving the SSM value
 
